@@ -17,7 +17,8 @@
   },
   "autoload": {
     "psr-4": {
-      "Pimcore\\Bundle\\EcommerceFrameworkBundle\\": "src/"
+      "Pimcore\\Bundle\\EcommerceFrameworkBundle\\": "src/",
+      "Pimcore\\Model\\DataObject\\": "var/classes/DataObject"
     }
   },
   "extra": {
