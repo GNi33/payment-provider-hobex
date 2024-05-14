@@ -9,64 +9,65 @@
  * Full copyright and license information is available in
  * LICENSE.md which is distributed with this source code.
  *
- *  @copyright  Copyright (c) Pimcore GmbH (http://www.pimcore.org)
- *  @license    http://www.pimcore.org/license     GPLv3 and PCL
+ * @copyright  Copyright (c) Pimcore GmbH (http://www.pimcore.org)
+ * @license    http://www.pimcore.org/license     GPLv3 and PCL
  */
 
 namespace Pimcore\Bundle\EcommerceFrameworkBundle\PaymentManager\Payment;
 
 use GuzzleHttp\Client;
+use Pimcore\Bundle\EcommerceFrameworkBundle\Exception\UnsupportedException;
+use Pimcore\Bundle\EcommerceFrameworkBundle\Model\AbstractOrder;
+use Pimcore\Bundle\EcommerceFrameworkBundle\Model\AbstractPaymentInformation;
 use Pimcore\Bundle\EcommerceFrameworkBundle\OrderManager\OrderAgentInterface;
 use Pimcore\Bundle\EcommerceFrameworkBundle\PaymentManager\Status;
 use Pimcore\Bundle\EcommerceFrameworkBundle\PaymentManager\StatusInterface;
 use Pimcore\Bundle\EcommerceFrameworkBundle\PaymentManager\V7\Payment\Config\HobexConfig;
-use Pimcore\Bundle\EcommerceFrameworkBundle\PaymentManager\V7\Payment\PaymentInterface;
 use Pimcore\Bundle\EcommerceFrameworkBundle\PaymentManager\V7\Payment\StartPaymentRequest\AbstractRequest;
 use Pimcore\Bundle\EcommerceFrameworkBundle\PaymentManager\V7\Payment\StartPaymentRequest\HobexRequest;
 use Pimcore\Bundle\EcommerceFrameworkBundle\PaymentManager\V7\Payment\StartPaymentResponse\SnippetResponse;
-use Pimcore\Bundle\EcommerceFrameworkBundle\PaymentManager\V7\Payment\StartPaymentResponse\StartPaymentResponseInterface;
 use Pimcore\Bundle\EcommerceFrameworkBundle\PriceSystem\PriceInterface;
+use Pimcore\Model\DataObject\Objectbrick\Data\PaymentProviderHobex;
 use Pimcore\Model\DataObject\OnlineShopOrder;
 use Psr\Log\LoggerAwareInterface;
 use Psr\Log\LoggerAwareTrait;
 use Psr\Log\LoggerInterface;
-use Symfony\Component\Form\FormBuilderInterface;
 use Symfony\Component\Lock\LockFactory;
 use Symfony\Component\OptionsResolver\OptionsResolver;
 use Symfony\Component\Templating\EngineInterface;
 
-class Hobex extends AbstractPayment implements PaymentInterface, LoggerAwareInterface
+class Hobex extends AbstractPayment implements LoggerAwareInterface
 {
     use LoggerAwareTrait;
 
-    const LOCK_KEY = 'hobex-handleresponse-lock';
+    protected const LOCK_KEY = 'hobex-handleresponse-lock';
 
-    const HOST_URL_TESTSYSTEM = 'https://test.oppwa.com';
-    const HOST_URL_LIVESYSTEM = 'https://oppwa.com';
+    protected const HOST_URL_TESTSYSTEM = 'https://test.oppwa.com';
+    protected const HOST_URL_LIVESYSTEM = 'https://oppwa.com';
 
-    const PAYMENT_TYPE_PREAUTHORIZATION = 'PA';
-    const PAYMENT_TYPE_DEBIT = 'DB';
-    const PAYMENT_TYPE_CREDIT = 'CD';
-    const PAYMENT_TYPE_CAPTURE = 'CP';
-    const PAYMENT_TYPE_REVERSAL = 'RV';
-    const PAYMENT_TYPE_REFUND = 'RF';
+    protected const PAYMENT_TYPE_PREAUTHORIZATION = 'PA';
+    protected const PAYMENT_TYPE_DEBIT = 'DB';
+    protected const PAYMENT_TYPE_CREDIT = 'CD';
+    protected const PAYMENT_TYPE_CAPTURE = 'CP';
+    protected const PAYMENT_TYPE_REVERSAL = 'RV';
+    protected const PAYMENT_TYPE_REFUND = 'RF';
 
-    const TRANSACTION_CATEGORY_ECOMMERCE = 'EC';
+    protected const TRANSACTION_CATEGORY_ECOMMERCE = 'EC';
 
-    /**
-     * @var LockFactory
-     */
-    protected $lockFactory;
+    protected LockFactory $lockFactory;
 
-    /** @var EngineInterface */
-    private $template;
+    private EngineInterface $template;
 
-    private $authorizedData = [];
+    private array $authorizedData = [];
 
-    /** @var HobexConfig */
-    private $config;
+    private HobexConfig $config;
 
-    public function __construct(array $options, EngineInterface $template, LoggerInterface $hobexLogger, LockFactory $lockFactory)
+    public function __construct(
+        array           $options,
+        EngineInterface $template,
+        LoggerInterface $hobexLogger,
+        LockFactory     $lockFactory
+    )
     {
         $this->setLogger($hobexLogger);
         $this->template = $template;
@@ -79,33 +80,22 @@ class Hobex extends AbstractPayment implements PaymentInterface, LoggerAwareInte
             ->setTestSystem($options['testSystem'])
             ->setHostURL($options['testSystem'] ? static::HOST_URL_TESTSYSTEM : static::HOST_URL_LIVESYSTEM)
             ->setPaymentMethods($options['payment_methods']) //Hobex terminology: "paymentBrands"
-            ->setWebhookSecret($options['webhookSecret'] ?? null)
-        ;
+            ->setWebhookSecret($options['webhookSecret'] ?? null);
         $this->lockFactory = $lockFactory;
     }
 
-    /**
-     * @return HobexConfig
-     */
-    public function getConfig()
+    public function getConfig(): HobexConfig
     {
         return $this->config;
     }
 
-    /**
-     * @return EngineInterface
-     */
-    public function getTemplate()
+    public function getTemplate(): EngineInterface
     {
         return $this->template;
     }
 
     /**
      * Check options that have been passed by the main configuration
-     *
-     * @param OptionsResolver $resolver
-     *
-     * @return OptionsResolver
      */
     protected function configureOptions(OptionsResolver $resolver): OptionsResolver
     {
@@ -127,7 +117,7 @@ class Hobex extends AbstractPayment implements PaymentInterface, LoggerAwareInte
         };
 
         foreach ($resolver->getRequiredOptions() as $requiredProperty) {
-            if (!in_array($requiredProperty, ['testSystem'])) {
+            if ($requiredProperty !== 'testSystem') {
                 $resolver->setAllowedValues($requiredProperty, $notEmptyValidator);
             }
         }
@@ -140,19 +130,29 @@ class Hobex extends AbstractPayment implements PaymentInterface, LoggerAwareInte
      */
     protected function getStartPaymentURL(): string
     {
-        return $this->config->getHostURL().'/v1/checkouts';
+        return $this->config->getHostURL() . '/v1/checkouts';
     }
 
     /**
-     * @inheritDoc
      * parameter configuration see https://hobex.docs.oppwa.com/reference/parameters
-     *
-     * @param HobexRequest $requestConfig
-     *
-     * @return SnippetResponse
      */
-    public function startPayment(OrderAgentInterface $orderAgent, PriceInterface $price, AbstractRequest $requestConfig): StartPaymentResponseInterface
+    public function startPayment(
+        OrderAgentInterface $orderAgent,
+        PriceInterface      $price,
+        AbstractRequest     $config
+    ): SnippetResponse
     {
+
+        if (!$config instanceof HobexRequest) {
+            throw new \InvalidArgumentException('Config must be instance of HobexRequest');
+        }
+
+        $order = $orderAgent->getOrder();
+
+        $this->logger->debug('Start payment for order ' . $order->getOrdernumber(), [
+            'orderId' => $order->getId()
+        ]);
+
         $client = new Client([
                 'base_uri' => $this->getStartPaymentURL(),
                 'headers' => [
@@ -174,44 +174,46 @@ class Hobex extends AbstractPayment implements PaymentInterface, LoggerAwareInte
                 'transactionCategory' => static::TRANSACTION_CATEGORY_ECOMMERCE,
             ];
 
-            if (!empty($requestConfig->getInvoiceId())) {
-                $params['merchantInvoiceId'] = $requestConfig->getInvoiceId();
+            if (!empty($config->getInvoiceId())) {
+                $params['merchantInvoiceId'] = $config->getInvoiceId();
             }
 
-            if (!empty($requestConfig->getMemo())) {
-                $params['merchantMemo'] = $requestConfig->getMemo();
+            if (!empty($config->getMemo())) {
+                $params['merchantMemo'] = $config->getMemo();
             }
 
             $params = $this->addCustomPaymentData($params);
 
             $response = $client->request('post', '', ['form_params' => $params]);
-            $jsonResponse = json_decode($response->getBody()->getContents(), true);
 
-            $this->logger->debug('Received JSON response in '.self::class.'::initPayment', $jsonResponse);
+            $jsonResponse = json_decode($response->getBody()->getContents(), true, 512, JSON_THROW_ON_ERROR);
+
+            $this->logger->debug('Received JSON response in ' . self::class . '::initPayment', $jsonResponse);
 
             //result codes: see https://hobex.docs.oppwa.com/reference/resultCodes
             if ($jsonResponse && isset($jsonResponse['id'])) {
-                $this->handleStartPaymentResponse($orderAgent, $jsonResponse, $requestConfig);
-                $renderedWidget = $this->renderWidget($requestConfig, $jsonResponse['id']);
-                $response = new SnippetResponse($orderAgent->getOrder(), $renderedWidget);
+                $this->handleStartPaymentResponse($orderAgent, $jsonResponse, $config);
+                $renderedWidget = $this->renderWidget($config, $jsonResponse['id']);
 
-                return $response;
+                return new SnippetResponse($orderAgent->getOrder(), $renderedWidget);
             }
 
             throw new \Exception('Could not parse response.');
+
         } catch (\Exception $e) {
             $this->logException('Cannot initialize payment', 'initPayment', $e, ['response' => $response]);
+
             throw $e;
         }
     }
 
-    protected function logException(string $message, string $method, \Exception $e, array $logParams)
+    protected function logException(string $message, string $method, \Exception $e, array $logParams): void
     {
         $this->logger->alert($message, array_merge([
             'class' => self::class,
             'method' => $method,
             'line' => $e->getLine(),
-            'message' => $e->getMessage(), ],
+            'message' => $e->getMessage(),],
             $logParams
         ));
     }
@@ -219,10 +221,6 @@ class Hobex extends AbstractPayment implements PaymentInterface, LoggerAwareInte
     /**
      * Hook for adding additional payment parameters to the request.
      * see https://hobex.docs.oppwa.com/reference/parameters
-     *
-     * @param array $params
-     *
-     * @return array
      */
     protected function addCustomPaymentData(array $params): array
     {
@@ -231,15 +229,17 @@ class Hobex extends AbstractPayment implements PaymentInterface, LoggerAwareInte
 
     protected function renderWidget(HobexRequest $requestConfig, string $checkoutId): string
     {
-        $js = '<script async src="'.$this->config->getHostURL().'/v1/paymentWidgets.js?checkoutId=%s"></script>';
+        $js = '<script async src="' . $this->config->getHostURL() . '/v1/paymentWidgets.js?checkoutId=%s"></script>';
+
         if ($requestConfig->getLocale()) {
             $js = '<script>
                         var wpwlOptions = {
-                            locale: "'.$requestConfig->getLocale().'",
-                            style: "'.$requestConfig->getStyle().'"
+                            locale: "' . $requestConfig->getLocale() . '",
+                            style: "' . $requestConfig->getStyle() . '"
                         };
-                    </script>'.$js;
+                    </script>' . $js;
         }
+
         $form = '<form action="%s" class="paymentWidgets" data-brands="%s"></form>';
 
         $brands = $this->config->getPaymentMethods();
@@ -247,9 +247,12 @@ class Hobex extends AbstractPayment implements PaymentInterface, LoggerAwareInte
             $brands = $requestConfig->getBrands();
         }
 
-        $renderedWidget = sprintf($js.$form, $checkoutId, $requestConfig->getShopperResultUrl(), implode(' ', $brands));
-
-        return $renderedWidget;
+        return sprintf(
+            $js . $form,
+            $checkoutId,
+            $requestConfig->getShopperResultUrl(),
+            implode(' ', $brands)
+        );
     }
 
     /**
@@ -257,12 +260,14 @@ class Hobex extends AbstractPayment implements PaymentInterface, LoggerAwareInte
      *
      * @throws \Exception
      */
-    public function handleResponse(StatusInterface | array $response): StatusInterface
+    public function handleResponse(StatusInterface|array $response): StatusInterface
     {
         $responseStatus = StatusInterface::STATUS_PENDING;
         $checkoutId = $response['id'];
         $lock = $this->lockFactory->createLock(self::LOCK_KEY . $checkoutId);
         $lock->acquire(true);
+
+        $this->logger->debug('Handle payment response for order checkout id ' . $checkoutId);
 
         try {
             $jsonResponse = null;
@@ -272,6 +277,7 @@ class Hobex extends AbstractPayment implements PaymentInterface, LoggerAwareInte
 
             if (!$jsonResponse) {
                 $transactionId = $this->getExistingTransactionId($checkoutId);
+
                 if ($transactionId) {
                     $resourcePath = sprintf('/v1/query/%s', $transactionId);
                 } else {
@@ -280,6 +286,7 @@ class Hobex extends AbstractPayment implements PaymentInterface, LoggerAwareInte
                         $resourcePath = sprintf('/v1/checkouts/%s/payment', $checkoutId);
                     }
                 }
+
                 $client = new Client([
                         'base_uri' => $this->config->getHostURL() . $resourcePath,
                         'headers' => [
@@ -287,8 +294,9 @@ class Hobex extends AbstractPayment implements PaymentInterface, LoggerAwareInte
                         ],
                     ]
                 );
-                $response = $client->request('get', '?entityId=' . $this->config->getEntityId());
-                $jsonResponse = json_decode($response->getBody()->getContents(), true);
+
+                $queryResponse = $client->request('GET', '?entityId=' . $this->config->getEntityId());
+                $jsonResponse = json_decode($queryResponse->getBody()->getContents(), true);
             }
 
             $this->logger->debug('Received JSON response in ' . self::class . '::handleResponse', $jsonResponse);
@@ -313,12 +321,11 @@ class Hobex extends AbstractPayment implements PaymentInterface, LoggerAwareInte
             //https://hobex.docs.oppwa.com/reference/resultCodes
             if ($this->isSuccess($jsonResponse['result']['code'])) {
                 $paymentType = $jsonResponse['paymentType'];
-                switch ($paymentType) {
-                    case self::PAYMENT_TYPE_DEBIT:
-                        $responseStatus = StatusInterface::STATUS_CLEARED;
-                        break;
-                    default: $responseStatus = StatusInterface::STATUS_AUTHORIZED;
-                }
+
+                $responseStatus = match ($paymentType) {
+                    self::PAYMENT_TYPE_DEBIT => StatusInterface::STATUS_CLEARED,
+                    default => StatusInterface::STATUS_AUTHORIZED,
+                };
             }
 
             $providerData = $this->createProviderData($jsonResponse);
@@ -359,21 +366,6 @@ class Hobex extends AbstractPayment implements PaymentInterface, LoggerAwareInte
     }
 
     /**
-     * Start payment and build form, including token.
-     *
-     * @param PriceInterface $price
-     * @param array $config
-     *
-     * @return FormBuilderInterface
-     *
-     * @throws \Exception
-     */
-    public function initPayment(PriceInterface $price, array $config)
-    {
-        throw new \Exception('Hobex is only supported in V7.');
-    }
-
-    /**
      * Executes payment
      *
      *  if price is given, recurPayment command is executed
@@ -389,12 +381,6 @@ class Hobex extends AbstractPayment implements PaymentInterface, LoggerAwareInte
     /**
      * Executes credit
      *
-     * @param PriceInterface $price
-     * @param string $reference
-     * @param string $transactionId
-     *
-     * @return StatusInterface
-     *
      * @throws \Exception
      */
     public function executeCredit(PriceInterface $price, string $reference, string $transactionId): StatusInterface
@@ -404,33 +390,24 @@ class Hobex extends AbstractPayment implements PaymentInterface, LoggerAwareInte
 
     /**
      * https://hobex.docs.oppwa.com/reference/resultCodes
-     *
-     * @param string $code
-     *
-     * @return bool
      */
-    protected function isSuccess($code)
+    protected function isSuccess(string $code): bool
     {
-        return strpos($code, '000.100.') === 0 || strpos($code, '000.000.') === 0;
+        return str_starts_with($code, '000.100.') || str_starts_with($code, '000.000.');
     }
 
     /**
      * unlike documented, merchantTransactionId only allows numeric values (N20)
      * might be required and should be unique
      * creates numeric value from internal paymentId
-     *
-     * @param \Pimcore\Bundle\EcommerceFrameworkBundle\Model\AbstractOrder $order
-     *
-     * @return int
      */
-    protected function createMerchantId(\Pimcore\Bundle\EcommerceFrameworkBundle\Model\AbstractOrder $order)
+    protected function createMerchantId(AbstractOrder $order): int
     {
         if ($order->getLastPaymentInfo()) {
             $internalPaymentId = $order->getLastPaymentInfo()->getInternalPaymentId();
-            if ($internalPaymentId) {
-                $txtId = (int) preg_replace('/\D/', '0', str_replace('payment_', '', $internalPaymentId));
 
-                return $txtId;
+            if ($internalPaymentId) {
+                return (int)preg_replace('/\D/', '0', str_replace('payment_', '', $internalPaymentId));
             }
         }
 
@@ -439,13 +416,8 @@ class Hobex extends AbstractPayment implements PaymentInterface, LoggerAwareInte
 
     /**
      * prefix all keys with 'hobex_' to allow pimcore to store the values in fieldcollection PaymentInfo
-     *
-     * @param array $jsonResponse
-     * @param string $prefix
-     *
-     * @return array
      */
-    protected function createProviderData($jsonResponse, $prefix = 'hobex_')
+    protected function createProviderData(array $jsonResponse, string $prefix = 'hobex_'): array
     {
         $providerData = [];
 
@@ -453,7 +425,7 @@ class Hobex extends AbstractPayment implements PaymentInterface, LoggerAwareInte
         foreach ($jsonResponse as $key => $value) {
             if (is_array($value)) {
                 $data = $this->createProviderData($value, $prefix . $key . '_');
-                $providerData = $providerData + $data;
+                $providerData += $data;
             } else {
                 $providerData[$prefix . $key] = $value;
             }
@@ -465,57 +437,46 @@ class Hobex extends AbstractPayment implements PaymentInterface, LoggerAwareInte
     /** hook to customized handle jsonResponse of start payment */
     protected function handleStartPaymentResponse(
         OrderAgentInterface $orderAgent,
-        $jsonResponse,
-        \Pimcore\Bundle\EcommerceFrameworkBundle\PaymentManager\V7\Payment\StartPaymentRequest\HobexRequest $requestConfig
-    ) {
+                            $jsonResponse,
+        HobexRequest        $requestConfig
+    )
+    {
     }
 
-    /**
-     * @param string $checkoutId
-     *
-     * @return string|null
-     *
-     * @throws \Exception
-     */
-    protected function getExistingTransactionId($checkoutId)
+    protected function getExistingTransactionId(string $checkoutId): ?string
     {
         $transactionId = null;
         $list = OnlineShopOrder::getList([
             'objectbricks' => ['PaymentProviderHobex'],
-
         ]);
+
         $list->setCondition('PaymentProviderHobex.auth_checkoutId = ?', [$checkoutId]);
+
         if ($list->count() > 0) {
             /** @var OnlineShopOrder $order */
             $order = $list->current();
-            $hobex = $order->getPaymentProvider()->getPaymentProviderHobex();
-            $status = $hobex->getAuth_paymentState();
-            if (!$this->isStatusPending($status)) {
-                $transactionId = $hobex->getAuth_extId();
+            $hobex = $order->getPaymentProvider()?->getPaymentProviderHobex();
+
+            if ($hobex instanceof \Pimcore\Model\DataObject\Objectbrick\Data\PaymentProviderHobex) {
+                $status = $hobex->getAuth_paymentState();
+                if (!$this->isStatusPending($status)) {
+                    $transactionId = $hobex->getAuth_extId();
+                }
             }
         }
 
         return $transactionId;
     }
 
-    /**
-     * @param string $status
-     *
-     * @return bool
-     */
-    protected function isStatusPending($status)
+    protected function isStatusPending(string $status): bool
     {
-        return strpos($status, '000.200.') === 0;
+        return str_starts_with($status, '000.200.');
     }
 
-    /**
-     * @parama array  $response
-     *
-     * @return array|null
-     */
-    protected function handleWebhookResponse($response)
+    protected function handleWebhookResponse(array $response): ?array
     {
         $secret = $this->config->getWebhookSecret();
+
         if (!$secret) {
             $this->logger->debug('can not handle webhook response in ' . self::class . '::handleWebhookResponse, no webhook secret defined');
         } else {
@@ -528,7 +489,8 @@ class Hobex extends AbstractPayment implements PaymentInterface, LoggerAwareInte
             $cipher_text = hex2bin($response['base64Content']);
             $jsonResult = openssl_decrypt($cipher_text, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv, $auth_tag);
             $result = json_decode($jsonResult, true);
-            if ($result['type'] == 'PAYMENT') {
+
+            if ($result['type'] === 'PAYMENT') {
                 return $result['payload'];
             }
         }
