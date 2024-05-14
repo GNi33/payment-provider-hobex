@@ -9,6 +9,7 @@
   "prefer-stable": true,
   "minimum-stability": "dev",
   "require": {
+    "ext-openssl": "*",
     "pimcore/pimcore": "^11.0",
     "pimcore/ecommerce-framework-bundle": "^1.0"
   },
