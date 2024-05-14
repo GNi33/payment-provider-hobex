@@ -143,6 +143,11 @@ class Hobex extends AbstractPayment implements PaymentInterface, LoggerAwareInte
         return $this->config->getHostURL().'/v1/checkouts';
     }
 
+    protected function getRefundUrl(): string
+    {
+        return $this->config->getHostURL() . '/v1/payments';
+    }
+
     /**
      * @inheritDoc
      * parameter configuration see https://hobex.docs.oppwa.com/reference/parameters
@@ -379,27 +384,151 @@ class Hobex extends AbstractPayment implements PaymentInterface, LoggerAwareInte
      *  if price is given, recurPayment command is executed
      *  if no price is given, amount from authorized Data is used and deposit command is executed
      *
-     * @throws \Exception
+     * @throws UnsupportedException
      */
     public function executeDebit(PriceInterface $price = null, string $reference = null): StatusInterface
     {
-        throw new \Exception('executeDebit is not implemented yet.');
+        throw new UnsupportedException('executeDebit is not implemented yet.');
+    }
+
+    public function executeRefund(AbstractOrder $order, AbstractPaymentInformation $paymentInfo = null): StatusInterface
+    {
+        try {
+            $paymentProvider = $order->getPaymentProvider()?->getPaymentProviderHobex();
+
+            if (!$paymentProvider instanceof PaymentProviderHobex) {
+                throw new \RuntimeException('Incorrect PaymentProvider data');
+            }
+
+            if($paymentInfo === null) {
+                $paymentInfo = $order->getLastPaymentInfo();
+            }
+
+            $paymentId = $paymentInfo->getPaymentReference();
+
+            $this->logger->debug('Execute refund for payment id ' . $paymentId . ' on order ' . $order->getOrdernumber(), [
+                'orderId' => $order->getId()
+            ]);
+
+            $params = [
+                'entityId' => $this->config->getEntityId(),
+                'currency' => $paymentProvider->getAuth_currency(),
+                'amount' => number_format((float)$paymentProvider->getAuth_amount(), 2, '.', ''),
+                'paymentType' => static::PAYMENT_TYPE_REFUND
+            ];
+
+            $client = new Client([
+                    'base_uri' => "{$this->getRefundUrl()}/{$paymentId}",
+                    'headers' => [
+                        'Authorization' => 'Bearer ' . $this->config->getAuthorizationBearer(),
+                    ],
+                ]
+            );
+
+            try {
+                $response = $client->request('post', '', ['form_params' => $params]);
+
+                $jsonResponse = json_decode($response->getBody()->getContents(), true, 512, JSON_THROW_ON_ERROR);
+
+            } catch (\Exception $e) {
+
+                $logParams = [
+                    'params' => $params,
+                    'message' => $e->getMessage()
+                ];
+
+                if (isset($response)) {
+                    $this->logger->debug(var_export($response, true));
+
+                    if (isset($jsonResponse)) {
+                        $this->logger->debug(var_export($jsonResponse, true));
+                        $logParams['responseJson'] = $jsonResponse;
+                    }
+
+                    $logParams['response'] = $response;
+                }
+
+
+                $this->logException('Could not process refund response.', 'handleResponse', $e, $logParams);
+
+                throw $e;
+            }
+
+            $internalPaymentId = $paymentInfo->getInternalPaymentId();
+            $paymentType = $paymentInfo->getProvider_hobex_paymentType();
+
+            $merchantMemo = array_key_exists('merchantMemo', $jsonResponse) ? $jsonResponse['merchantMemo'] : '';
+
+            $clearedParams = [
+                'paymentType' => $paymentType,
+                'amount' => $jsonResponse['amount'],
+                'currency' => $jsonResponse['currency'],
+                'merchantMemo' => $merchantMemo,
+                'paymentState' => $jsonResponse['result']['code'],
+                'extId' => $jsonResponse['id'],
+                'checkoutId' => $jsonResponse['ndc'],
+                'transactionId' => $jsonResponse['merchantTransactionId'],
+            ];
+
+            $this->setAuthorizedData($clearedParams);
+            $providerData = $this->createProviderData($jsonResponse);
+
+            $responseState = StatusInterface::STATUS_AUTHORIZED;
+
+            //https://hobex.docs.oppwa.com/reference/resultCodes
+            if ($this->isSuccess($jsonResponse['result']['code'])) {
+                $paymentType = $jsonResponse['paymentType'];
+
+                $responseState = match ($paymentType) {
+                    self::PAYMENT_TYPE_REFUND => 'refunded',
+                    default => StatusInterface::STATUS_AUTHORIZED,
+                };
+            }
+
+            $this->logger->debug('Executed refund for payment id ' . $internalPaymentId . ' on order ' . $order->getOrdernumber(), [
+                'response' => $jsonResponse
+            ]);
+
+            $responseStatus = new Status(
+                $internalPaymentId, //internal Payment ID
+                $jsonResponse['id'], //paymentReference
+                $jsonResponse['result']['description'],
+                $responseState,
+                $providerData
+            );
+
+            return $responseStatus;
+
+        } catch (\Exception $e) {
+
+            $exceptionLogParams = [
+                'message' => $e->getMessage()
+            ];
+
+            if (isset($response)) {
+                $this->logger->debug(var_export($response, true));
+
+                if (isset($jsonResponse)) {
+                    $this->logger->debug(var_export($jsonResponse, true));
+                    $exceptionLogParams['responseJson'] = $jsonResponse;
+                }
+
+                $exceptionLogParams['response'] = $response;
+            }
+
+            $this->logException('Could not process refund response.', 'handleResponse', $e, $exceptionLogParams);
+            throw $e;
+        }
     }
 
     /**
      * Executes credit
      *
-     * @param PriceInterface $price
-     * @param string $reference
-     * @param string $transactionId
-     *
-     * @return StatusInterface
-     *
-     * @throws \Exception
+     * @throws UnsupportedException
      */
     public function executeCredit(PriceInterface $price, string $reference, string $transactionId): StatusInterface
     {
-        throw new \Exception('executeCredit is not implemented yet.');
+        throw new UnsupportedException('executeCredit is not implemented yet.');
     }
 
     /**
