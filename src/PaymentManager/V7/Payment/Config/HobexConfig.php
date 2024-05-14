@@ -17,31 +17,23 @@ namespace Pimcore\Bundle\EcommerceFrameworkBundle\PaymentManager\V7\Payment\Conf
 
 class HobexConfig
 {
-    protected $entityId = '';
+    protected string $entityId = '';
 
-    protected $authorizationBearer = '';
+    protected string $authorizationBearer = '';
 
-    protected $testSystem = false;
+    protected bool $testSystem = false;
 
-    protected $hostURL = '';
+    protected string $hostURL = '';
 
-    protected $paymentMethods = [];
+    protected array $paymentMethods = [];
 
-    protected $webhookSecret;
+    protected ?string $webhookSecret;
 
-    /**
-     * @return string
-     */
     public function getEntityId(): string
     {
         return $this->entityId;
     }
 
-    /**
-     * @param string $entityId
-     *
-     * @return HobexConfig
-     */
     public function setEntityId(string $entityId): self
     {
         $this->entityId = $entityId;
@@ -49,19 +41,11 @@ class HobexConfig
         return $this;
     }
 
-    /**
-     * @return string
-     */
     public function getAuthorizationBearer(): string
     {
         return $this->authorizationBearer;
     }
 
-    /**
-     * @param string $authorizationBearer
-     *
-     * @return HobexConfig
-     */
     public function setAuthorizationBearer(string $authorizationBearer): self
     {
         $this->authorizationBearer = $authorizationBearer;
@@ -69,19 +53,11 @@ class HobexConfig
         return $this;
     }
 
-    /**
-     * @return bool
-     */
     public function isTestSystem(): bool
     {
         return $this->testSystem;
     }
 
-    /**
-     * @param bool $testSystem
-     *
-     * @return HobexConfig
-     */
     public function setTestSystem(bool $testSystem): self
     {
         $this->testSystem = $testSystem;
@@ -89,19 +65,11 @@ class HobexConfig
         return $this;
     }
 
-    /**
-     * @return string
-     */
     public function getHostURL(): string
     {
         return $this->hostURL;
     }
 
-    /**
-     * @param string $hostURL
-     *
-     * @return HobexConfig
-     */
     public function setHostURL(string $hostURL): self
     {
         $this->hostURL = $hostURL;
@@ -109,18 +77,13 @@ class HobexConfig
         return $this;
     }
 
-    /**
-     * @return array
-     */
     public function getPaymentMethods(): array
     {
         return $this->paymentMethods;
     }
 
     /**
-     * @param string[] $paymentMethods
-     *
-     * @return HobexConfig
+     * @param array<string> $paymentMethods
      */
     public function setPaymentMethods(array $paymentMethods): self
     {
@@ -129,20 +92,12 @@ class HobexConfig
         return $this;
     }
 
-    /**
-     * @return string|null
-     */
-    public function getWebhookSecret()
+    public function getWebhookSecret(): ?string
     {
         return $this->webhookSecret;
     }
 
-    /**
-     * @param string|null $webhookSecret
-     *
-     * @return HobexConfig
-     */
-    public function setWebhookSecret($webhookSecret): self
+    public function setWebhookSecret(?string $webhookSecret): self
     {
         $this->webhookSecret = $webhookSecret;
 
