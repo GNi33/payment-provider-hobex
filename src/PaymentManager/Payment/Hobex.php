@@ -16,6 +16,9 @@
 namespace Pimcore\Bundle\EcommerceFrameworkBundle\PaymentManager\Payment;
 
 use GuzzleHttp\Client;
+use Pimcore\Bundle\EcommerceFrameworkBundle\Exception\UnsupportedException;
+use Pimcore\Bundle\EcommerceFrameworkBundle\Model\AbstractOrder;
+use Pimcore\Bundle\EcommerceFrameworkBundle\Model\AbstractPaymentInformation;
 use Pimcore\Bundle\EcommerceFrameworkBundle\OrderManager\OrderAgentInterface;
 use Pimcore\Bundle\EcommerceFrameworkBundle\PaymentManager\Status;
 use Pimcore\Bundle\EcommerceFrameworkBundle\PaymentManager\StatusInterface;
@@ -26,6 +29,7 @@ use Pimcore\Bundle\EcommerceFrameworkBundle\PaymentManager\V7\Payment\StartPayme
 use Pimcore\Bundle\EcommerceFrameworkBundle\PaymentManager\V7\Payment\StartPaymentResponse\SnippetResponse;
 use Pimcore\Bundle\EcommerceFrameworkBundle\PaymentManager\V7\Payment\StartPaymentResponse\StartPaymentResponseInterface;
 use Pimcore\Bundle\EcommerceFrameworkBundle\PriceSystem\PriceInterface;
+use Pimcore\Model\DataObject\Objectbrick\Data\PaymentProviderHobex;
 use Pimcore\Model\DataObject\OnlineShopOrder;
 use Psr\Log\LoggerAwareInterface;
 use Psr\Log\LoggerAwareTrait;
@@ -400,7 +404,7 @@ class Hobex extends AbstractPayment implements PaymentInterface, LoggerAwareInte
                 throw new \RuntimeException('Incorrect PaymentProvider data');
             }
 
-            if($paymentInfo === null) {
+            if ($paymentInfo === null) {
                 $paymentInfo = $order->getLastPaymentInfo();
             }
 
@@ -417,7 +421,8 @@ class Hobex extends AbstractPayment implements PaymentInterface, LoggerAwareInte
                 'paymentType' => static::PAYMENT_TYPE_REFUND
             ];
 
-            $client = new Client([
+            $client = new Client(
+                [
                     'base_uri' => "{$this->getRefundUrl()}/{$paymentId}",
                     'headers' => [
                         'Authorization' => 'Bearer ' . $this->config->getAuthorizationBearer(),
@@ -438,16 +443,13 @@ class Hobex extends AbstractPayment implements PaymentInterface, LoggerAwareInte
                 ];
 
                 if (isset($response)) {
-                    $this->logger->debug(var_export($response, true));
 
                     if (isset($jsonResponse)) {
-                        $this->logger->debug(var_export($jsonResponse, true));
                         $logParams['responseJson'] = $jsonResponse;
                     }
 
                     $logParams['response'] = $response;
                 }
-
 
                 $this->logException('Could not process refund response.', 'handleResponse', $e, $logParams);
 
@@ -517,6 +519,7 @@ class Hobex extends AbstractPayment implements PaymentInterface, LoggerAwareInte
             }
 
             $this->logException('Could not process refund response.', 'handleResponse', $e, $exceptionLogParams);
+
             throw $e;
         }
     }
