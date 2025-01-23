@@ -9,8 +9,8 @@
  * Full copyright and license information is available in
  * LICENSE.md which is distributed with this source code.
  *
- *  @copyright  Copyright (c) Pimcore GmbH (http://www.pimcore.org)
- *  @license    http://www.pimcore.org/license     GPLv3 and PCL
+ * @copyright  Copyright (c) Pimcore GmbH (http://www.pimcore.org)
+ * @license    http://www.pimcore.org/license     GPLv3 and PCL
  */
 
 namespace Pimcore\Bundle\EcommerceFrameworkBundle\PaymentManager\Payment;
@@ -31,6 +31,7 @@ use Pimcore\Bundle\EcommerceFrameworkBundle\PaymentManager\V7\Payment\StartPayme
 use Pimcore\Bundle\EcommerceFrameworkBundle\PriceSystem\PriceInterface;
 use Pimcore\Model\DataObject\Objectbrick\Data\PaymentProviderHobex;
 use Pimcore\Model\DataObject\OnlineShopOrder;
+use Pimcore\Model\DataObject\OnlineShopOrder\PaymentProvider;
 use Psr\Log\LoggerAwareInterface;
 use Psr\Log\LoggerAwareTrait;
 use Psr\Log\LoggerInterface;
@@ -397,8 +398,15 @@ class Hobex extends AbstractPayment implements PaymentInterface, LoggerAwareInte
 
     public function executeRefund(AbstractOrder $order, AbstractPaymentInformation $paymentInfo = null): StatusInterface
     {
+        $paymentProvider = null;
+        $paymentProviderBrick = $order->getPaymentProvider();
+
         try {
-            $paymentProvider = $order->getPaymentProvider()?->getPaymentProviderHobex();
+
+            if ($paymentProviderBrick instanceof PaymentProvider
+                && method_exists($paymentProviderBrick, 'getPaymentProviderHobex')) {
+                $paymentProvider = $paymentProviderBrick->getPaymentProviderHobex();
+            }
 
             if (!$paymentProvider instanceof PaymentProviderHobex) {
                 throw new \RuntimeException('Incorrect PaymentProvider data');
@@ -443,11 +451,6 @@ class Hobex extends AbstractPayment implements PaymentInterface, LoggerAwareInte
                 ];
 
                 if (isset($response)) {
-
-                    if (isset($jsonResponse)) {
-                        $logParams['responseJson'] = $jsonResponse;
-                    }
-
                     $logParams['response'] = $response;
                 }
 
@@ -457,6 +460,11 @@ class Hobex extends AbstractPayment implements PaymentInterface, LoggerAwareInte
             }
 
             $internalPaymentId = $paymentInfo->getInternalPaymentId();
+
+            if(!method_exists($paymentInfo, 'getProvider_hobex_paymentType')) {
+                throw new \RuntimeException('Additional fields on PaymentInfo FieldCollection missing');
+            }
+
             $paymentType = $paymentInfo->getProvider_hobex_paymentType();
 
             $merchantMemo = array_key_exists('merchantMemo', $jsonResponse) ? $jsonResponse['merchantMemo'] : '';
@@ -508,13 +516,6 @@ class Hobex extends AbstractPayment implements PaymentInterface, LoggerAwareInte
             ];
 
             if (isset($response)) {
-                $this->logger->debug(var_export($response, true));
-
-                if (isset($jsonResponse)) {
-                    $this->logger->debug(var_export($jsonResponse, true));
-                    $exceptionLogParams['responseJson'] = $jsonResponse;
-                }
-
                 $exceptionLogParams['response'] = $response;
             }
 
